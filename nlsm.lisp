@@ -423,7 +423,7 @@
      (case expr
        (t-coupling "t") (TR "Tr") (PARA "Para") (PERP "Perp") (ID "Id")
        (SIGMA3 "Subscript[\\[Sigma], 3]") (PI "\\[CapitalPi]") (PHI "\\[CapitalPhi]")
-       (UbarEU "\\[CapitalEpsilon]") (varphi "\\[Phi]")
+       (UBAREU "\\[CapitalEpsilon]") (VARPHI "\\[Phi]")
        (nil "") ;; Handle NIL by returning empty string
        (otherwise (string-capitalize (symbol-name expr)))))
     ((listp expr)
