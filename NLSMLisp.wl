@@ -1,6 +1,8 @@
 (* ::Package:: *)
 
 (* ::Package:: *)
+(**)
+
 
 BeginPackage["NLSMLisp`"];
 
@@ -55,6 +57,19 @@ recToLisp[head_[x_, d_[y_]]] /; (MemberQ[{"CapitalEpsilon", "\[CapitalEpsilon]"}
 recToLisp[Subscript[s_Symbol, 3]] /; MemberQ[{"Sigma", "\[Sigma]"}, safeName[s]] := "SIGMA3";
 recToLisp[s_Symbol] /; safeName[s] == "\[Sigma]3" := "SIGMA3";
 
+(* --- SPECIAL CONSTANTS & RESERVED WORDS --- *)
+(* Translates protected Mathematica/Lisp symbols to safe variable names. *)
+(* Usage: recToLisp[symbol] /; safeName[symbol] == "Name" := "SafeString"; *)
+
+(* 1. Lambda (Protected in Lisp) -> "l" *)
+recToLisp[s_Symbol] /; MemberQ[{"Lambda", "\[Lambda]"}, safeName[s]] := "l";
+
+(* 2. t (Protected 'True' in Lisp) -> "t-coupling" *)
+recToLisp[s_Symbol] /; safeName[s] == "t" := "t-coupling";
+
+(* 3. Future reserved words (Example) *)
+(* recToLisp[s_Symbol] /; safeName[s] == "gamma" := "g-factor"; *)
+
 
 (* --- OPERATIONS --- *)
 recToLisp[d_Dot] := StringRiffle[recToLisp /@ (List @@ d), " "];
@@ -95,16 +110,32 @@ EvaluateModel[lispCommand_String] := Module[{scriptPath, sbclPath, processResult
     Return[$Failed];
    ];
 
-   rawOutput = processResult["StandardOutput"];
-   cleanString = First[StringCases[rawOutput, "<|" ~~ ___ ~~ "|>"], "" ];
-   
-   If[cleanString === "", 
-    Print["Extraction Failed. No valid Association found."];
+	rawOutput = processResult["StandardOutput"];
+
+   (* 1. ROBUST POSITION FINDING *)
+   (* Find ALL occurrences of braces. This avoids the "negative integer" error. *)
+   allStarts = StringPosition[rawOutput, "{"];
+   allEnds   = StringPosition[rawOutput, "}"];
+
+   If[allStarts === {} || allEnds === {},
+    Print["Extraction Failed. Output does not contain a list {...}"];
     Print["Raw Output: ", rawOutput];
     Return[$Failed];
    ];
 
+   (* 2. SELECT RANGE *)
+   (* Take the very first '{' *)
+   startIdx = allStarts[[1, 1]];
+   
+   (* Take the very last '}' using standard list indexing [[-1]] *)
+   (* We use [[-1, 1]] to get the position of the character itself *)
+   endIdx   = allEnds[[-1, 1]];
+
+   (* 3. EXTRACT AND PARSE *)
+   cleanString = StringTake[rawOutput, {startIdx, endIdx}];
+   
    data = ToExpression[cleanString];
+   
    Return[data];
 ];
 

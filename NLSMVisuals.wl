@@ -1,6 +1,8 @@
 (* ::Package:: *)
 
 (* ::Package:: *)
+(**)
+
 
 BeginPackage["NLSMVisuals`", {"NLSMAlgebra`"}];
 
@@ -149,7 +151,21 @@ cleanSkeletonDisplay[expr_] := expr //. {
    w_[pos_, extra_] /; safeName[w] == "W" :> Dot[extra, w[pos]]
 };
 
-generateReport[data_, factor_: 1] := Module[{skeleton, cleanedSkeleton, diagrams, gridItems, headerRow, titleRow}, 
+(* --- 1. MANAGER: Handles the List of Terms --- *)
+generateReport[data_List, factor_: 1] := Column[
+   Table[
+    Column[{
+      Style["Term " <> ToString[i], "Section", Gray],
+      (* Call the Worker below for this specific term *)
+      generateReport[data[[i]], factor], 
+      Style["____________________", Gray]
+    }, Alignment -> Center]
+    , {i, Length[data]}],
+   Spacings -> 2, Alignment -> Center
+];
+
+(* --- 2. WORKER: Handles a Single Term --- *)
+generateReport[data_Association, factor_: 1] := Module[{skeleton, cleanedSkeleton, diagrams, gridItems, headerRow, titleRow}, 
    skeleton = data["Skeleton"];
    diagrams = data["Diagrams"];
    cleanedSkeleton = cleanSkeletonDisplay[skeleton];
@@ -169,23 +185,74 @@ generateReport[data_, factor_: 1] := Module[{skeleton, cleanedSkeleton, diagrams
    Grid[Join[{titleRow, headerRow}, gridItems], Frame -> All, Spacings -> {1, 1}, ItemStyle -> {{Left, Center, Left}}, Alignment -> {Left, Center}]
 ];
 
-saveAllDiagrams[data_, pathTemplate_] := Module[{skeleton, diagrams, graphic, dir, base, ext, fullPath, createdFiles}, 
-   skeleton = data["Skeleton"]; diagrams = data["Diagrams"];
-   dir = DirectoryName[pathTemplate]; base = FileBaseName[pathTemplate]; ext = FileExtension[pathTemplate];
-   If[ext == "", ext = "pdf"]; If[dir =!= "" && ! DirectoryQ[dir], CreateDirectory[dir]];
+(* --- 1. MANAGER: Handles the List of Terms --- *)
+saveAllDiagrams[data_List, pathTemplate_] := Module[{ext, base, dir, termPath, allFiles = {}},
+   dir = DirectoryName[pathTemplate];
+   base = FileBaseName[pathTemplate];
+   ext = FileExtension[pathTemplate];
+   If[ext == "", ext = "pdf"];
+   
+   Do[
+    (* Create filename like: "pic/S2p_T1.pdf" *)
+    termPath = FileNameJoin[{
+       dir, 
+       base <> "_T" <> ToString[i] <> "." <> ext
+       }];
+    
+    (* Call the Worker below *)
+    Join[allFiles, saveAllDiagrams[data[[i]], termPath]];
+    , {i, Length[data]}];
+   
+   Flatten[allFiles]
+];
+
+(* --- 2. WORKER: Handles a Single Term --- *)
+saveAllDiagrams[data_Association, pathTemplate_] := Module[{skeleton, diagrams, graphic, dir, base, ext, fullPath, createdFiles}, 
+   skeleton = data["Skeleton"];
+   diagrams = data["Diagrams"];
+   
+   dir = DirectoryName[pathTemplate];
+   base = FileBaseName[pathTemplate];
+   ext = FileExtension[pathTemplate];
+   If[ext == "", ext = "pdf"];
+   If[dir =!= "" && ! DirectoryQ[dir], CreateDirectory[dir]];
+   
    createdFiles = {};
    Do[
     graphic = drawDiagram[skeleton, diag["Topology"]];
+    (* Append diagram ID to filename: "pic/S2p_T1_1.pdf" *)
     fullPath = FileNameJoin[{dir, base <> "_" <> ToString[diag["ID"]] <> "." <> ext}];
-    Export[fullPath, graphic]; AppendTo[createdFiles, fullPath];, {diag, diagrams}
+    Export[fullPath, graphic];
+    AppendTo[createdFiles, fullPath];, 
+    {diag, diagrams}
    ];
-   Print["Saved ", Length[createdFiles], " diagrams to: ", dir]; createdFiles
+   
+   Print["Saved ", Length[createdFiles], " diagrams to: ", dir];
+   createdFiles
 ];
 
-saveReport[data_, path_, factor_: 1] := Module[{dir, reportGrid}, 
-   dir = DirectoryName[path]; If[dir =!= "" && ! DirectoryQ[dir], CreateDirectory[dir]];
+(* --- 1. MANAGER: Handles the List of Terms --- *)
+saveReport[data_List, path_, factor_: 1] := Module[{reportColumn, dir},
+   dir = DirectoryName[path];
+   If[dir =!= "" && ! DirectoryQ[dir], CreateDirectory[dir]];
+   
+   (* This calls the MANAGER version of generateReport *)
+   reportColumn = generateReport[data, factor];
+   
+   Export[path, reportColumn];
+   Print["Full Multi-Term Report saved to: ", path];
+   path
+];
+
+(* --- 2. WORKER: Handles a Single Term --- *)
+saveReport[data_Association, path_, factor_: 1] := Module[{dir, reportGrid}, 
+   dir = DirectoryName[path];
+   If[dir =!= "" && ! DirectoryQ[dir], CreateDirectory[dir]];
+   
    reportGrid = generateReport[data, factor];
-   Export[path, reportGrid]; Print["Report saved successfully to: ", path]; path
+   Export[path, reportGrid];
+   Print["Report saved successfully to: ", path];
+   path
 ];
 
 saveDiagram[data_, id_, path_] := Module[{skeleton, diagrams, targetDiag, graphic, dir}, 
