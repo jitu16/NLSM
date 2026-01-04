@@ -1,45 +1,49 @@
 (defvar *counter* 0)
 
+(defparameter *default-keldysh-rules*
+  '((W . contract-W)
+    (VARPHI . contract-varphi))
+  "Default contraction rules for the NLSM.")
+
+(defparameter *default-keldysh-fields*
+  '(W VARPHI)
+  "Default field types to look for in the Keldysh electronic model.")
+
+(defvar *physics-rules* "Dynamic configuration map. 
+   Format: ((TYPE . FUNCTION-NAME) ...)
+   Example: ((W . contract-W) (varphi . contract-varphi))")
+
 ;; ============================================================
 ;; 1. NORMALIZATION & UTILS
 ;; ============================================================
+
 (defun expand-trace-arg (term)
   "Expands an exponent expression into a list of repeated terms.
    
    Positive Exponent:
-   Input: (expt X 3)
-   Output: (X X X)
+   Input: (expt X 3) -> Output: (X X X)
    
    Negative Exponent:
-   Input: (expt X -2)
-   Output: ((/ 1 (* X X)))
+   Input: (expt X -2) -> Output: ((/ 1 (* X X)))
    
    If input is not an exponent, returns it as a single-item list."
   (if (and (consp term) (eq (first term) 'expt))
       (let ((base (second term))
             (exponent (third term)))
         (if (minusp exponent)
-            ;; Case: Negative Exponent -> Construct Reciprocal (/ 1 (* X X ...))
             (let* ((n (abs exponent))
                    (repeated (loop repeat n collect (copy-tree base))))
               (list (list '/ 1 (cons '* repeated))))
-            
-            ;; Case: Positive Exponent -> Just Repeat (X X ...)
             (loop repeat exponent collect (copy-tree base))))
-      
-      ;; Case: Not an exponent -> Return as is
       (list term)))
-
 
 (defun normalize (expr)
   "Walks the entire expression tree to handle pre-processing tasks.
    Currently, it expands powers inside traces (Tr[X^2] -> Tr[X X])."
   (cond
     ((atom expr) expr)
-    ;; Case: Trace -> Expand arguments using helper
     ((eq (first expr) 'tr)
      (cons 'tr (mapcan #'expand-trace-arg (cdr expr))))
-    ;; Case: Generic List -> Recurse down
     (t (cons (first expr) (mapcar #'normalize (cdr expr))))))
 
 (defun remove-nth (n list)
@@ -52,23 +56,41 @@
   (copy-tree expr))
 
 ;; ============================================================
-;; 2. TAGGING & PAIRING
+;; 2. TAGGING
 ;; ============================================================
 
-(defun tag-fields (expr field-name)
-  "Recursively walks the expression. Every time it finds the target field,
-   it wraps it in a tagged structure with a unique ID.
-   CRITICAL FIX: Uses (copy-tree expr) to ensure no shared memory references."
+(defun get-tag-id (tag)
+  "Retrieves the unique numeric ID from a tagged field.
+   Input: (:tagged ID TYPE CONTENT) -> Output: ID (integer)"
+  (second tag))
+
+(defun get-tag-type (tag)
+  "Retrieves the field type symbol from a tagged field.
+   Input: (:tagged ID TYPE CONTENT) -> Output: TYPE (symbol)"
+  (third tag))
+
+(defun get-tag-content (tag)
+  "Retrieves the actual expression content from a tagged field.
+   Input: (:tagged ID TYPE CONTENT) -> Output: CONTENT (list)"
+  (fourth tag))
+
+(defun tag-fields (expr target-fields)
+  "Recursively walks the expression tree. If it encounters a symbol belonging
+   to the list TARGET-FIELDS, it wraps it in a tagged structure including its type.
+   
+   Input: 
+     expr: The expression tree.
+     target-fields: A list of symbols to target (e.g., '(W VARPHI))
+   
+   Output: 
+     The expression tree with targets replaced by (:tagged ID TYPE CONTENT)."
   (cond
-    ;; Found the field -> Tag it and increment counter
-    ((and (consp expr) (eq (first expr) field-name))
+    ((and (consp expr) (member (first expr) target-fields))
      (incf *counter*)
-     (list :tagged *counter* (copy-tree expr))) ;; <--- COPIES STRUCTURE
-    ;; Generic List -> Recurse
+     (list :tagged *counter* (first expr) (copy-tree expr)))
     ((consp expr)
-     (cons (tag-fields (car expr) field-name)
-           (tag-fields (cdr expr) field-name)))
-    ;; Atom -> Return as is
+     (cons (tag-fields (car expr) target-fields)
+           (tag-fields (cdr expr) target-fields)))
     (t expr)))
 
 (defmacro with-tagging (&body body)
@@ -76,16 +98,41 @@
   `(let ((*counter* 0)) ,@body))
 
 (defun extract-tags (expr)
-  "Returns a flat list of all (:tagged ...) objects found in the tree.
-   Used to build the list of items available for Wick contraction."
+  "Returns a flat list of all (:tagged ...) objects found in the tree."
   (cond
     ((atom expr) nil)
     ((eq (first expr) :tagged) (list expr))
     (t (mapcan #'extract-tags expr))))
 
+;; ============================================================
+;; 3. PAIRING LOGIC
+;; ============================================================
+
+(defun group-tags-by-type (tags)
+  "Sorts a flat list of tags into buckets based on their type.
+   Input: (tag1 tag2 ...)
+   Output: Alist ((Type1 . (tags...)) (Type2 . (tags...)))"
+  (let ((groups nil))
+    (dolist (tag tags)
+      (let* ((type (get-tag-type tag))
+             (entry (assoc type groups)))
+        (if entry
+            (push tag (cdr entry))
+            (push (list type tag) groups))))
+    groups))
+
+(defun cartesian-product-scenarios (lists-of-scenarios)
+  "Recursively combines independent pairing lists into global scenarios."
+  (cond
+    ((null lists-of-scenarios) '(nil))
+    (t (let ((current-scenarios (first lists-of-scenarios))
+             (rest-scenarios (cartesian-product-scenarios (rest lists-of-scenarios))))
+         (loop for curr in current-scenarios
+               nconc (loop for r in rest-scenarios
+                           collect (append curr r)))))))
+
 (defun generate-pairs (items)
   "Generates ALL possible Wick contraction pairings for the list of items.
-   Returns a list of scenarios, where each scenario is a list of pairs.
    Recursive logic: Pick head, pair with every other item, recurse on remainder."
   (cond
     ((null items) '(nil))
@@ -96,13 +143,23 @@
        ;; Iterate through all possible partners for 'head'
        (loop for i from 0 below (length rest)
              for partner in rest
-             for remaining = (remove-nth i rest)
+             For remaining = (remove-nth i rest)
              ;; Combine this pair with all valid pairings of the remaining items
              nconc (loop for sub-pairing in (generate-pairs remaining)
                          collect (cons (list head partner) sub-pairing)))))))
 
+(defun generate-stratified-pairs (items)
+  "The Main Pairing Function.
+   Input: items (A flat list of tagged fields).
+   Output: List of all valid global pairing scenarios."
+  (let* ((groups (group-tags-by-type items))
+         (per-type-scenarios 
+          (loop for entry in groups
+                collect (generate-pairs (cdr entry)))))
+    (cartesian-product-scenarios per-type-scenarios)))
+
 ;; ============================================================
-;; 3. PHYSICS RULES (SPLIT & MERGE)
+;; 4. FIELD CONTRACTION LOGIC
 ;; ============================================================
 
 (defun apply-op (op list-of-terms)
@@ -129,14 +186,13 @@
 (defun get-single-coefficient (trace-content id)
   "For Different-Trace contraction (Tr[A W]).
    Cyclically rotates the trace content so that W (id) is at the end,
-   then returns everything else (A). Effectively computes A = Tr_content / W."
+   then returns everything else (A)."
   (let ((pos (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id))) trace-content)))
     (append (subseq trace-content (1+ pos)) (subseq trace-content 0 pos))))
 
 (defun get-splitting-coefficients (trace-content id1 id2)
   "For Same-Trace contraction (Tr[A W1 B W2]).
-   Returns two values: the list A (between W1 and W2) and the list B (wrapping around).
-   Crucial for the splitting formula."
+   Returns two values: the list A (between W1 and W2) and the list B (wrapping around)."
   (let ((pos1 (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id1))) trace-content))
         (pos2 (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id2))) trace-content)))
     (if (< pos1 pos2)
@@ -145,40 +201,32 @@
         (values (append (subseq trace-content (1+ pos1)) (subseq trace-content 0 pos2))
                 (subseq trace-content (1+ pos2) pos1)))))
 
-(defun apply-physics-rules (skeleton pairing)
-  "The Core Physics Logic.
-   1. Extracts derivatives from the paired fields (W r dx).
-   2. Constructs the Propagator (Pi ...).
-   3. Determines if we are Splitting (same trace) or Merging (different traces).
-   4. Returns the mathematical expression for the contraction result.
-   FIXED: Deep copies extracted lists to prevent shared references."
-  (let* ((tag1 (first pairing)) (tag2 (second pairing))
-         (id1 (second tag1)) (id2 (second tag2))
-         (content1 (third tag1)) (content2 (third tag2))
+(defun contract-W (skeleton tag1 tag2)
+  "The specific physics logic for Standard Fermionic Fields (W).
+   Handles: Derivatives extraction, Propagator construction, Trace Splitting/Merging.
+   Input: skeleton (tree), tag1, tag2 -> Output: S-Expression of the contraction."
+  (let* ((id1 (get-tag-id tag1)) (id2 (get-tag-id tag2))
+         (content1 (get-tag-content tag1)) 
+         (content2 (get-tag-content tag2))
          
-         ;; --- Extract Derivatives ---
-         ;; Input format expected: (W r (d x) (d y)...)
+         ;; --- 1. Extract Derivatives ---
          (r1 (second content1)) (r2 (second content2))
-         ;; Use cddr to skip 'W' and 'r', collecting all (d ...) terms
          (all-derivs (append (cddr content1) (cddr content2)))
          
-         ;; --- Construct Propagator ---
+         ;; --- 2. Construct Propagator ---
          (propagator (list* 'PI (list '- r1 r2) all-derivs))
          
-         ;; --- Locate Traces ---
+         ;; --- 3. Locate Traces ---
          (trace1 (find-trace-containing skeleton id1))
          (trace2 (find-trace-containing skeleton id2)))
 
     (cond
       ((or (null trace1) (null trace2)) (error "Tags missing in skeleton."))
       
-      ;; Case A: SPLITTING (Same Trace object)
-      ;; Formula: -t/4 * (Tr[A_para Pi]Tr[B_para] - Tr[A_para S3 Pi]Tr[B_para S3])
+      ;; Case A: SPLITTING (Same Trace)
       ((eq trace1 trace2)
        (multiple-value-bind (A-list B-list) 
            (get-splitting-coefficients (get-content-without-tr trace1) id1 id2)
-         
-         ;; COPY THE LISTS HERE to ensure independence
          (let ((A-para (apply-op 'PARA (deep-copy A-list)))
                (B-para (apply-op 'PARA (deep-copy B-list))))
            `(* (/ (- t-coupling) 4)
@@ -186,32 +234,94 @@
                   (* (tr ,@(deep-copy A-para) sigma3 ,(deep-copy propagator)) 
                      (tr ,@(deep-copy B-para) sigma3)))))))
 
-      ;; Case B: MERGING (Different Trace objects)
-      ;; Formula: -t/2 * Tr[A_perp Pi B_perp]
+      ;; Case B: MERGING (Different Traces)
       (t 
        (let* ((A-list (get-single-coefficient (get-content-without-tr trace1) id1))
               (B-list (get-single-coefficient (get-content-without-tr trace2) id2))
-              
-              ;; COPY THE LISTS HERE to ensure independence
               (A-perp (apply-op 'PERP (deep-copy A-list)))
               (B-perp (apply-op 'PERP (deep-copy B-list))))
          `(* (/ (- t-coupling) 2) (tr ,@A-perp ,propagator ,@B-perp)))))))
 
+(defun replace-tag-in-expr (expr target-id replacement-list)
+  "Recursively walks the expression tree.
+   When it finds a Tag with ID = target-id, it replaces the Tag 
+   with the contents of replacement-list (spliced in)."
+  (cond
+    ;; Case: Found the target tag -> Return Splice Instruction
+    ((and (consp expr) (eq (first expr) :tagged) (= (second expr) target-id))
+     (cons :splice replacement-list))
+
+    ;; Case: List - Handle Splicing
+    ((consp expr)
+     (loop for item in expr
+           for processed = (replace-tag-in-expr item target-id replacement-list)
+           if (and (consp processed) (eq (first processed) :splice))
+             append (cdr processed)
+           else collect processed))
+
+    (t expr)))
+
+(defun contract-varphi (skeleton tag1 tag2)
+  "Contraction logic for Varphi fields.
+   Generates 3 branches (VK, VA, VR) multiplying each by (i/2).
+   FIXED: Uses ,@skel to splice the list of traces into the product."
+  (let* ((id1 (get-tag-id tag1)) (id2 (get-tag-id tag2))
+         (content1 (get-tag-content tag1)) 
+         (content2 (get-tag-content tag2))
+         (x (second content1))
+         (y (second content2))
+         (diff (list '- x y))
+         (prefactor '(/ i 2)))
+
+    (list '+ 
+          ;; --- Branch 1: VK ---
+          (let ((skel (deep-copy skeleton)))
+            (setf skel (replace-tag-in-expr skel id1 (list 1 (list 'VK diff))))
+            (setf skel (replace-tag-in-expr skel id2 (list 1)))
+            ;; NOTICE THE comma-at sign (,@) BELOW
+            `(* ,prefactor ,@skel))
+
+          ;; --- Branch 2: VA ---
+          (let ((skel (deep-copy skeleton)))
+            (setf skel (replace-tag-in-expr skel id1 (list 'SIGMA1 (list 'VA diff))))
+            (setf skel (replace-tag-in-expr skel id2 (list 1)))
+            `(* ,prefactor ,@skel))
+
+          ;; --- Branch 3: VR ---
+          (let ((skel (deep-copy skeleton)))
+            (setf skel (replace-tag-in-expr skel id1 (list 1 (list 'VR diff))))
+            (setf skel (replace-tag-in-expr skel id2 (list 'SIGMA1)))
+            `(* ,prefactor ,@skel)))))
+
 ;; ============================================================
-;; 4. EXPANSION ENGINE (THE ARCHITECT)
+;; 5. PHYSICS RULES DISPATCHER
+;; ============================================================
+
+(defun apply-physics-rules (skeleton pairing)
+  "The Dispatcher. Looks up the correct contraction function based on Tag Type."
+  (let* ((tag1 (first pairing))
+         (tag2 (second pairing))
+         (type (get-tag-type tag1)) ;; We assume tag1 and tag2 have same type
+         (rule-entry (assoc type *physics-rules*)))
+    
+    (unless rule-entry
+      (error "No contraction rule found for field type: ~A" type))
+    
+    (funcall (cdr rule-entry) skeleton tag1 tag2)))
+
+;; ============================================================
+;; 6. EXPANSION ENGINE
 ;; ============================================================
 
 (defun has-tagged-field-p (expr)
-  "Checks if an expression tree contains any tagged fields.
-   Used to decide if we need to expand an operator to free a field."
+  "Checks if an expression tree contains any tagged fields."
   (cond ((atom expr) nil)
         ((eq (first expr) :tagged) t)
         (t (some #'has-tagged-field-p expr))))
 
 (defun distribute-linear-op (op args)
   "Distributes a linear operator (Tr, Para, Perp) over a Sum.
-   Also handles flattening products inside traces if necessary.
-   Input: (Tr (+ A B)) -> (+ (Tr A) (Tr B))"
+   Also handles flattening products inside traces if necessary."
   (let ((pos-of-sum (position-if (lambda (x) (and (consp x) (eq (first x) '+))) args)))
     (if (null pos-of-sum) (cons op args)
         (let ((sum-terms (cdr (nth pos-of-sum args)))
@@ -222,23 +332,18 @@
                                             (cdr term) (list term))))
                            (expand-expression (cons op (append (deep-copy prefix) middle (deep-copy suffix)))))))))))
 
-;; --- HELPER: PREVENTS EMPTY OPERATORS ---
 (defun make-op-term (op content)
   "Creates (OP content...). 
-   CRITICAL FIX: 
-     If content is empty:
-     PARA -> 'ID
-     PERP -> 0 (This kills invalid terms like Para[W])"
+   Fixes empty content: PARA -> 'ID, PERP -> 0."
   (if (null content) 
       (if (eq op 'PARA) 'ID 0)
       (cons op content)))
 
 (defun expand-operator (op terms)
   "Expands (OP A W B) based on the parity of W (assumed Odd/Perp).
-   Recursive expansion ensures multiple Ws are handled correctly.
-   Deep copies ensure no shared memory."
+   Recursive expansion ensures multiple Ws are handled correctly."
   (if (not (has-tagged-field-p terms)) 
-      (cons op (deep-copy terms)) ;; Base case: No fields, just copy.
+      (cons op (deep-copy terms))
       
       (let* ((pos (position-if (lambda (x) (and (consp x) (eq (first x) :tagged))) terms))
              (W (nth pos terms))
@@ -246,41 +351,26 @@
              (R (subseq terms (1+ pos))))
 
         ;; W is inherently PERP (Odd).
-        ;; Multiplication Rules:
-        ;; PARA (Even) -> Requires L * W * R to be Even.
-        ;;    Since W is Odd, L*R must be Odd.
-        ;;    So L and R must have DIFFERENT parities (Para/Perp or Perp/Para).
-        ;;
-        ;; PERP (Odd)  -> Requires L * W * R to be Odd.
-        ;;    Since W is Odd, L*R must be Even.
-        ;;    So L and R must have SAME parities (Para/Para or Perp/Perp).
-
+        ;; PARA (Even) -> L*R must be Odd (Mixed Parity).
+        ;; PERP (Odd)  -> L*R must be Even (Same Parity).
         (if (eq op 'PARA)
-            ;; Parent is PARA: Split into Mixed Parity
             `(+ (* ,(make-op-term 'PARA (deep-copy L)) 
                    ,(deep-copy W) 
-                   ,(expand-expression (make-op-term 'PERP (deep-copy R)))) ;; Recurse on R
+                   ,(expand-expression (make-op-term 'PERP (deep-copy R)))) 
                 (* ,(make-op-term 'PERP (deep-copy L)) 
                    ,(deep-copy W) 
                    ,(expand-expression (make-op-term 'PARA (deep-copy R)))))
 
-            ;; Parent is PERP: Split into Same Parity
             `(+ (* ,(make-op-term 'PARA (deep-copy L)) 
                    ,(deep-copy W) 
-                   ,(expand-expression (make-op-term 'PARA (deep-copy R)))) ;; Recurse on R
+                   ,(expand-expression (make-op-term 'PARA (deep-copy R))))
                 (* ,(make-op-term 'PERP (deep-copy L)) 
                    ,(deep-copy W) 
                    ,(expand-expression (make-op-term 'PERP (deep-copy R)))))))))
 
-
 (defun expand-expression (expr)
   "The Main Expansion Routine.
-   Ensures that tagged fields are brought to the top level of products.
-   Handles:
-   - Converting (-) to (* -1)
-   - Flattening Sums
-   - Distributing operators over sums
-   - Expanding Para/Perp using the structural rules."
+   Handles: Minus signs, Flattening Sums, Distributing operators, Para/Perp expansion."
   (cond
     ((atom expr) expr)
     ((eq (first expr) :tagged) expr)
@@ -317,10 +407,8 @@
     (t expr)))
 
 ;; ============================================================
-;; 5. ORCHESTRATOR
+;; 7. ORCHESTRATOR
 ;; ============================================================
-
-(defun get-tag-id (item) (second item))
 
 (defun contains-tag-id-p (expr id)
   "Helper to find if an expression subtree contains a specific tag ID."
@@ -351,8 +439,8 @@
 
 (defun process-scenario (expr pairings)
   "Processes a specific pairing scenario on the expression.
-   1. Expands expression to make fields accessible.
-   2. Iteratively applies contractions from the pairings list.
+   1. Expands expression.
+   2. Iteratively applies contractions.
    3. Handles branching sums generated by expansions."
   (let ((ex (expand-expression expr)))
     (cond
@@ -367,24 +455,22 @@
       (t (process-scenario (apply-contraction-in-context ex (first pairings)) (rest pairings))))))
 
 ;; ============================================================
-;; 6. THE SAFE CLEANER (The Sieve)
+;; 8. THE SAFE CLEANER
 ;; ============================================================
 
 (defun simplify-expression (expr)
   "The 'Structural Sieve'.
-   Does NOT perform complex algebra. It only cleans up the structure to prevent
-   zero-diagrams from being passed to Mathematica.
+   Does NOT perform complex algebra. It only cleans up the structure.
    
    Operations:
-   1. Flattens nested Sums: (+ A (+ B)) -> (+ A B).
-   2. Prunes dead branches in Products: (* A 0 B) -> 0.
-   3. Prunes dead branches in Operators: (TR A 0 B) -> 0.
-   4. Applies safe atomic physics rules: Tr[Sigma3] -> 0, Perp[Pi] -> 0."
+   1. Flattens nested Sums.
+   2. Prunes dead branches in Products (* A 0 B -> 0).
+   3. Prunes dead branches in Operators (Tr ... 0 ... -> 0).
+   4. Applies safe atomic physics rules (e.g. Tr[Sigma3] -> 0)."
   (cond
     ((atom expr) expr)
     
     ;; === SUM (+) ===
-    ;; Flattens nested sums and removes zeros.
     ((eq (first expr) '+)
      (let* ((args (mapcar #'simplify-expression (cdr expr)))
             (flat (loop for a in args if (and (consp a) (eq (first a) '+)) append (cdr a) else collect a))
@@ -394,7 +480,6 @@
              (t (cons '+ clean)))))
 
     ;; === PRODUCT (*) ===
-    ;; Flattens nested products, removes identity elements (1), and annihilates if 0 is present.
     ((eq (first expr) '*)
      (let* ((args (mapcar #'simplify-expression (cdr expr)))
             (flat (loop for a in args if (and (consp a) (eq (first a) '*)) append (cdr a) else collect a)))
@@ -406,49 +491,39 @@
                     (t (cons '* clean))))))))
 
     ;; === OPERATORS (TR / PARA / PERP) ===
-    ;; Applies structural cleanup and safe atomic physics rules.
     ((member (first expr) '(tr PARA PERP))
      (let ((args (mapcar #'simplify-expression (cdr expr))))
        (cond
-         ;; If ANY argument is 0, the linear operator evaluates to 0.
          ((member 0 args) 0)
-         
-         ;; Atomic Physics Rule: Tr[Sigma3] vanishes.
          ((and (eq (first expr) 'tr) (= (length args) 1) (eq (first args) 'SIGMA3)) 0)
-         
-         ;; Atomic Physics Rule: Perp[Pi] vanishes because Pi is diagonal.
          ((and (eq (first expr) 'PERP) (= (length args) 1) 
                (or (eq (first args) 'PI) (and (consp (first args)) (eq (first (first args)) 'PI)))) 0)
-         
          (t (cons (first expr) args)))))
 
-    ;; === GENERIC LIST ===
     (t (cons (first expr) (mapcar #'simplify-expression (cdr expr))))))
 
-
-
 ;; ============================================================
-;; 7. MATHEMATICA INTERFACE
+;; 9. MATHEMATICA INTERFACE
 ;; ============================================================
-
 (defun to-mma-string (expr &optional context)
   "Recursively converts Lisp structures to Mathematica string syntax.
-   Context: 'MATRIX (uses Dot . separator) or 'SCALAR (uses Times * separator).
-   UPDATED: Strictly filters empty strings to prevent ' . . ' syntax errors."
+   Context: 'MATRIX (uses Dot . separator) or 'SCALAR (uses Times * separator)."
   (cond
     ((numberp expr) (format nil "~A" expr))
     ((symbolp expr)
      (case expr
        (t-coupling "t") (TR "Tr") (PARA "Para") (PERP "Perp") (ID "Id")
-       (SIGMA3 "Subscript[\\[Sigma], 3]") (PI "\\[CapitalPi]") (PHI "\\[CapitalPhi]")
+       (SIGMA3 "Subscript[\\[Sigma], 3]") (SIGMA1 "Subscript[\\[Sigma], 1]")
+       (PI "\\[CapitalPi]") (PHI "\\[CapitalPhi]")
        (UBAREU "\\[CapitalEpsilon]") (VARPHI "\\[Phi]")
-       (nil "") ;; Handle NIL by returning empty string
+       ;; FIXED: Wrapped nil in a list ((nil) "") to satisfy CASE syntax
+       ((nil) "") 
        (otherwise (string-capitalize (symbol-name expr)))))
     ((listp expr)
      (let ((op (first expr)) (args (rest expr)))
        (cond
-         ;; Tagged items -> print value inside
-         ((eq op :tagged) (format nil "Tagged[~A, ~A]" (first args) (to-mma-string (second args) 'MATRIX)))
+         ((eq op :tagged) (format nil "Tagged[~A, ~A]"
+                                  (get-tag-id expr) (to-mma-string (get-tag-content expr) 'MATRIX)))
          
          ;; Derivatives: (d x) -> Der[x]
          ((eq op 'd) (format nil "Der[~A]" (to-mma-string (first args) 'SCALAR)))
@@ -460,10 +535,14 @@
                                       (mapcar (lambda (x) (to-mma-string x context)) args))))
                 (format nil "(~{~A~^ + ~})" clean))))
          
-         ((eq op '-) (if (= (length args) 1) (format nil "(-~A)" (to-mma-string (first args) context))
-                         (format nil "(~A - ~A)" (to-mma-string (first args) context) (to-mma-string (second args) context))))
-         ((eq op '/) (if (= (length args) 1) (format nil "(1 / ~A)" (to-mma-string (first args) context))
-                         (format nil "(~A / ~A)" (to-mma-string (first args) context) (to-mma-string (second args) context))))
+         ((eq op '-)
+          (if (= (length args) 1) (format nil "(-~A)" (to-mma-string (first args) context))
+              (format nil
+                      "(~A - ~A)" (to-mma-string (first args) context) (to-mma-string (second args) context))))
+         ((eq op '/)
+          (if (= (length args) 1) (format nil "(1 / ~A)" (to-mma-string (first args) context))
+              (format nil
+                      "(~A / ~A)" (to-mma-string (first args) context) (to-mma-string (second args) context))))
          
          ;; Product (* vs .) based on Context
          ((eq op '*)
@@ -474,7 +553,8 @@
                 (format nil (concatenate 'string "(~{~A~^" sep "~})") clean))))
          
          ;; Power
-         ((eq op 'expt) (format nil "(~A^~A)" (to-mma-string (first args) context) (to-mma-string (second args) 'SCALAR)))
+         ((eq op 'expt) (format nil
+                                "(~A^~A)" (to-mma-string (first args) context) (to-mma-string (second args) 'SCALAR)))
 
          ;; Propagator formatting with Dot Product for Derivatives
          ((eq op 'PI)
@@ -491,7 +571,8 @@
                     (format nil "~{~A~^ . ~}" clean))))
          
          ;; Standard functions (Keep SCALAR context)
-         (t (format nil "~A[~{~A~^, ~}]" (to-mma-string op) (mapcar (lambda (x) (to-mma-string x 'SCALAR)) args))))))))
+         (t (format nil
+                    "~A[~{~A~^, ~}]" (to-mma-string op) (mapcar (lambda (x) (to-mma-string x 'SCALAR)) args))))))))
 
 (defun format-topology-mma (pairing)
   "Helper to format the list of pairs into Mathematica syntax: {{1,2}, {3,4}}."
@@ -499,8 +580,7 @@
           (loop for pair in pairing collect (format nil "{~D, ~D}" (second (first pair)) (second (second pair))))))
 
 (defun print-simulation-object (sim-data)
-  "Helper: Prints a single simulation object as a Mathematica Association.
-   Used by generate-mma-report to format individual terms."
+  "Helper: Prints a single simulation object as a Mathematica Association."
   (let ((skeleton (getf sim-data :skeleton)) (diagrams (getf sim-data :diagrams)))
     (format t "<|~%  \"Skeleton\" -> ~A,~%  \"Diagrams\" -> {~%" (to-mma-string skeleton 'MATRIX))
     (loop for d in diagrams for i from 1 for is-last = (= i (length diagrams)) do
@@ -510,8 +590,7 @@
     (format t "  }~%|>")))
 
 (defun generate-mma-report (sim-data-list)
-  "Iterates over the list of simulation results (one per expansion term)
-   and prints a Mathematica List of Associations: { <|...|>, <|...|> }."
+  "Iterates over the list of simulation results and prints a Mathematica List of Associations."
   (format t "{~%")
   (loop for sim in sim-data-list
         for i from 1
@@ -520,73 +599,62 @@
         (format t "~A~%" (if is-last "" ",")))
   (format t "}~%"))
 
-
 ;; ============================================================
-;; 8. MAIN & CLI
+;; 10. WICK CONTRACTION SOLVER
 ;; ============================================================
 
 (defun collect-terms (expr)
   "Splits an expression tree into a flat list of additive terms.
-   Input: (+ A B (+ C D)) -> (A B C D) (assuming pre-simplified)
+   Input: (+ A B (+ C D)) -> (A B C D)
    Input: A -> (A)"
   (if (and (consp expr) (eq (first expr) '+))
       (cdr expr)
       (list expr)))
 
-;; ============================================================
-;; REFACTORED MAIN: THE DISPATCHER
-;; ============================================================
-
-(defun solve-wick-contraction (expr field-name)
-  "Top-level function refactored to enforce Linearity.
-   Flow:
-   1. Normalize & Tag (Assign IDs).
-   2. GLOBAL EXPANSION: Resolves all Perp/Para and nested sums *before* pairing.
-   3. SIMPLIFY: Flattens the resulting (+ ...) structure.
-   4. DISPATCH: Loops through each term independently.
-   
-   Returns: A LIST of simulation objects (one per expanded term)."
+(defun solve-wick-contraction (expr field-names)
   (let* ((norm (normalize expr))
-         ;; 1. Tag first. IDs must be consistent across expanded branches.
-         (tagged (with-tagging (tag-fields norm field-name)))
-         
-         ;; 2. Global Expansion & Simplification
-         ;;    This splits Perp[W] -> Term1 + Term2.
-         ;;    It handles the 'Algebra' phase before the 'Combinatorics' phase.
+         (tagged (with-tagging (tag-fields norm field-names)))
          (expanded (simplify-expression (expand-expression tagged)))
-         
-         ;; 3. Collect independent terms
          (terms (collect-terms expanded)))
 
-    ;; 4. Dispatch Loop
     (loop for term in terms collect
           (let* ((items (extract-tags term))
+                 (groups (group-tags-by-type items))
                  (n-fields (length items)))
+            
             (list :skeleton term
                   :diagrams
                   (cond
-                    ;; Case: Odd number of fields in this term -> Vanishes by Wick's Theorem
-                    ((oddp n-fields) 
-                     (list (list :id 1 :pairing nil :result 0 :status :vanished)))
-                    
-                    ;; Case: No fields (Constant term) -> Survives as is
                     ((zerop n-fields)
                      (list (list :id 1 :pairing nil :result term :status :survived)))
                     
-                    ;; Case: Standard Even Contraction
-                    (t (loop for p in (generate-pairs items) for i from 1
-                             ;; process-scenario will now act on an already-expanded term
+                    ;; Check Parity of EACH group
+                    ((some (lambda (entry) (oddp (length (cdr entry)))) groups)
+                     (list (list :id 1 :pairing nil :result 0 :status :vanished)))
+                    
+                    (t (loop for p in (generate-stratified-pairs items) 
+                             for i from 1
                              for res = (simplify-expression (process-scenario term p))
                              collect (list :id i 
                                            :pairing p 
                                            :result res 
                                            :status (if (equal res 0) :vanished :survived))))))))))
 
+;; ============================================================
+;; 11. API INTEGRATION & CLI
+;; ============================================================
 
-
-(defun main (raw-input) 
-  "Main entry point for local testing."
-  (generate-mma-report (solve-wick-contraction raw-input 'W)))
+(defun main (expr &key (rules *default-keldysh-rules*) 
+                       (fields *default-keldysh-fields*))
+  "The High-Level Entry Point.
+   
+   Arguments:
+     expr: The S-expression to solve (e.g. '(Tr ...)).
+     rules: (Optional) Alist mapping Field-Types to Contraction-Functions.
+     fields: (Optional) List of Field-Types to tag and contract."
+  
+  (let ((*physics-rules* rules))
+    (generate-mma-report (solve-wick-contraction expr fields))))
 
 (defun run-from-cli ()
   "Entry point for CLI execution (called by Mathematica).
