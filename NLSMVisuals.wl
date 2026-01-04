@@ -39,6 +39,11 @@ drawRedRibbonCurve[p1_, c1_, c2_, p2_] := {
    White, Thickness[$RibbonWidthInner], CapForm["Round"], BezierCurve[{p1, c1, c2, p2}]
 };
 
+drawGrayRibbonCurve[p1_, c1_, c2_, p2_] := {
+   Gray, Thickness[$RibbonWidthOuter], CapForm["Round"], BezierCurve[{p1, c1, c2, p2}], 
+   LightGray, Thickness[$RibbonWidthInner], CapForm["Round"], BezierCurve[{p1, c1, c2, p2}]
+};
+
 drawTripleHash[mid_, tangent_] := Module[{norm, spacing}, 
    norm = getNormal[tangent]; spacing = 0.09;
    {Black, Thickness[0.012], CapForm["Butt"], 
@@ -54,6 +59,29 @@ drawPhi[pos_, normal_] := Module[{splitLen = 0.7, spread = 0.6, tip1, tip2, c1, 
    c1 = pos + normal*(splitLen*0.3);
    {drawRedRibbonCurve[root, c1, tip1, tip1], drawRedRibbonCurve[root, c1, tip2, tip2]}
 ];
+
+drawSmallPhi[pos_, normal_] := Module[{len = 0.7, tip, c1, curve, t, pt, tan, norm, spacing, lines},
+   tip = pos + normal*len;
+   c1 = pos + normal*(len*0.5);
+   
+   (* Define the shape (Straight-ish tube) *)
+   curve = BezierFunction[{pos, c1, tip}];
+   
+   (* Generate the "Multiple Solid Lines" from beginning to end *)
+   lines = Table[
+     pt = curve[t];
+     tan = Normalize[curve'[t]];
+     norm = {-tan[[2]], tan[[1]]}; (* Perpendicular *)
+     
+     (* Draw line across the width of the inner ribbon *)
+     {Black, Thickness[0.005], Line[{pt - norm*0.025, pt + norm*0.025}]}
+     , {t, 0.1, 0.9, 0.1}]; (* 0.1 to 0.9 covers most of the tube, step 0.1 gives ~9 lines *)
+
+   (* Return: Gray Tube + The Lines *)
+   {drawGrayRibbonCurve[pos, c1, tip, tip], lines}
+];
+
+
 
 drawHub[center_, radius_] := {FaceForm[White], EdgeForm[{Black, Thickness[0.01]}], Disk[center, radius]};
 
@@ -75,19 +103,20 @@ extractPos[arg_] := Module[{found},
 ];
 
 (* Robust Skeleton Parsing *)
-parseSkeleton[expr_] := Module[{wOps, phiOps, allOps}, 
+parseSkeleton[expr_] := Module[{wOps, capPhiOps, smallPhiOps, allOps}, 
    
-   (* Match Tagged[id, W[pos]] by names *)
-   wOps = Cases[expr, 
-     tag_[id_, w_[pos_, ___]] /; (safeName[tag] == "Tagged" && safeName[w] == "W") 
-     :> <|"Type" -> "W", "ID" -> id, "Pos" -> pos|>, Infinity];
+   (* 1. W Fields *)
+   wOps = Cases[expr, tag_[id_, w_[pos_, ___]] /; (safeName[tag] == "Tagged" && safeName[w] == "W") :> <|"Type" -> "W", "ID" -> id, "Pos" -> pos|>, Infinity];
    
-   (* Match Phi[arg] or CapitalPhi[arg] by names *)
-   phiOps = Cases[expr, 
-     p_[arg_] /; MemberQ[{"Phi", "\[Phi]", "CapitalPhi", "\[CapitalPhi]"}, safeName[p]] 
-     :> <|"Type" -> "Phi", "ID" -> "Phi_" <> ToString[Unique[]], "Pos" -> extractPos[arg]|>, Infinity];
+   (* 2. Capital Phi (Phi, CapitalPhi, \[CapitalPhi]) *)
+   capPhiOps = Cases[expr, p_[arg_] /; MemberQ[{"Phi", "CapitalPhi", "\[CapitalPhi]"}, safeName[p]] :> 
+     <|"Type" -> "CapitalPhi", "ID" -> "Phi_" <> ToString[Unique[]], "Pos" -> extractPos[arg]|>, Infinity];
+
+   (* 3. Small Phi (\[Phi], VarPhi) *)
+   smallPhiOps = Cases[expr, p_[arg_] /; MemberQ[{"\[Phi]", "VarPhi"}, safeName[p]] :> 
+     <|"Type" -> "SmallPhi", "ID" -> "phi_" <> ToString[Unique[]], "Pos" -> extractPos[arg]|>, Infinity];
    
-   allOps = Join[wOps, phiOps];
+   allOps = Join[wOps, capPhiOps, smallPhiOps];
    GroupBy[allOps, #Pos &]
 ];
 
@@ -119,7 +148,8 @@ drawDiagram[skeleton_, topology_] := Module[{blocksData, distinctPos, posMap, la
      coord = getPortCoords[blockCenter, nPorts, i, radius];
      norm = getPortNormal[nPorts, i];
      op = ops[[i]];
-     If[op["Type"] == "Phi", AppendTo[layerTubes, drawPhi[coord, norm]]];
+     If[op["Type"] == "CapitalPhi", AppendTo[layerTubes, drawPhi[coord, norm]]];
+     If[op["Type"] == "SmallPhi", AppendTo[layerTubes, drawSmallPhi[coord, norm]]];
      If[op["Type"] == "W", globalPortMap[op["ID"]] = {coord, norm}];, 
      {i, 1, nPorts}
     ];, {pos, distinctPos}

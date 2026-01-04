@@ -3,15 +3,33 @@
 ;; ============================================================
 ;; 1. NORMALIZATION & UTILS
 ;; ============================================================
-
 (defun expand-trace-arg (term)
   "Expands an exponent expression into a list of repeated terms.
+   
+   Positive Exponent:
    Input: (expt X 3)
    Output: (X X X)
+   
+   Negative Exponent:
+   Input: (expt X -2)
+   Output: ((/ 1 (* X X)))
+   
    If input is not an exponent, returns it as a single-item list."
   (if (and (consp term) (eq (first term) 'expt))
-      (loop repeat (third term) collect (copy-tree (second term)))
+      (let ((base (second term))
+            (exponent (third term)))
+        (if (minusp exponent)
+            ;; Case: Negative Exponent -> Construct Reciprocal (/ 1 (* X X ...))
+            (let* ((n (abs exponent))
+                   (repeated (loop repeat n collect (copy-tree base))))
+              (list (list '/ 1 (cons '* repeated))))
+            
+            ;; Case: Positive Exponent -> Just Repeat (X X ...)
+            (loop repeat exponent collect (copy-tree base))))
+      
+      ;; Case: Not an exponent -> Return as is
       (list term)))
+
 
 (defun normalize (expr)
   "Walks the entire expression tree to handle pre-processing tasks.
@@ -480,35 +498,91 @@
   (format nil "{~{~A~^, ~}}" 
           (loop for pair in pairing collect (format nil "{~D, ~D}" (second (first pair)) (second (second pair))))))
 
-(defun generate-mma-report (sim-data)
-  "Generates the final Mathematica Association string containing the Skeleton and all Diagrams."
+(defun print-simulation-object (sim-data)
+  "Helper: Prints a single simulation object as a Mathematica Association.
+   Used by generate-mma-report to format individual terms."
   (let ((skeleton (getf sim-data :skeleton)) (diagrams (getf sim-data :diagrams)))
     (format t "<|~%  \"Skeleton\" -> ~A,~%  \"Diagrams\" -> {~%" (to-mma-string skeleton 'MATRIX))
     (loop for d in diagrams for i from 1 for is-last = (= i (length diagrams)) do
           (format t "    <| \"ID\" -> ~D, \"Status\" -> \"~A\", \"Topology\" -> ~A, \"Value\" -> ~A |>~A~%"
                   (getf d :id) (getf d :status) (format-topology-mma (getf d :pairing))
                   (to-mma-string (getf d :result) 'SCALAR) (if is-last "" ",")))
-    (format t "  }~%|>~%")))
+    (format t "  }~%|>")))
+
+(defun generate-mma-report (sim-data-list)
+  "Iterates over the list of simulation results (one per expansion term)
+   and prints a Mathematica List of Associations: { <|...|>, <|...|> }."
+  (format t "{~%")
+  (loop for sim in sim-data-list
+        for i from 1
+        for is-last = (= i (length sim-data-list)) do
+        (print-simulation-object sim)
+        (format t "~A~%" (if is-last "" ",")))
+  (format t "}~%"))
+
 
 ;; ============================================================
 ;; 8. MAIN & CLI
 ;; ============================================================
 
+(defun collect-terms (expr)
+  "Splits an expression tree into a flat list of additive terms.
+   Input: (+ A B (+ C D)) -> (A B C D) (assuming pre-simplified)
+   Input: A -> (A)"
+  (if (and (consp expr) (eq (first expr) '+))
+      (cdr expr)
+      (list expr)))
+
+;; ============================================================
+;; REFACTORED MAIN: THE DISPATCHER
+;; ============================================================
+
 (defun solve-wick-contraction (expr field-name)
-  "Top-level function to solve the model.
-   1. Normalizes input.
-   2. Tags fields.
-   3. Generates pairs.
-   4. Processes every scenario through expansion, contraction, and cleaning.
-   5. Returns the structured simulation object."
+  "Top-level function refactored to enforce Linearity.
+   Flow:
+   1. Normalize & Tag (Assign IDs).
+   2. GLOBAL EXPANSION: Resolves all Perp/Para and nested sums *before* pairing.
+   3. SIMPLIFY: Flattens the resulting (+ ...) structure.
+   4. DISPATCH: Loops through each term independently.
+   
+   Returns: A LIST of simulation objects (one per expanded term)."
   (let* ((norm (normalize expr))
+         ;; 1. Tag first. IDs must be consistent across expanded branches.
          (tagged (with-tagging (tag-fields norm field-name)))
-         (items (extract-tags tagged)))
-    (if (oddp (length items)) (error "Odd number of fields.")
-        (list :skeleton tagged :diagrams
-              (loop for p in (generate-pairs items) for i from 1
-                    for res = (simplify-expression (process-scenario tagged p))
-                    collect (list :id i :pairing p :result res :status (if (equal res 0) :vanished :survived)))))))
+         
+         ;; 2. Global Expansion & Simplification
+         ;;    This splits Perp[W] -> Term1 + Term2.
+         ;;    It handles the 'Algebra' phase before the 'Combinatorics' phase.
+         (expanded (simplify-expression (expand-expression tagged)))
+         
+         ;; 3. Collect independent terms
+         (terms (collect-terms expanded)))
+
+    ;; 4. Dispatch Loop
+    (loop for term in terms collect
+          (let* ((items (extract-tags term))
+                 (n-fields (length items)))
+            (list :skeleton term
+                  :diagrams
+                  (cond
+                    ;; Case: Odd number of fields in this term -> Vanishes by Wick's Theorem
+                    ((oddp n-fields) 
+                     (list (list :id 1 :pairing nil :result 0 :status :vanished)))
+                    
+                    ;; Case: No fields (Constant term) -> Survives as is
+                    ((zerop n-fields)
+                     (list (list :id 1 :pairing nil :result term :status :survived)))
+                    
+                    ;; Case: Standard Even Contraction
+                    (t (loop for p in (generate-pairs items) for i from 1
+                             ;; process-scenario will now act on an already-expanded term
+                             for res = (simplify-expression (process-scenario term p))
+                             collect (list :id i 
+                                           :pairing p 
+                                           :result res 
+                                           :status (if (equal res 0) :vanished :survived))))))))))
+
+
 
 (defun main (raw-input) 
   "Main entry point for local testing."
@@ -526,6 +600,3 @@
         (sb-ext:exit :code 0)))))
 
 (run-from-cli)
-
-
-
