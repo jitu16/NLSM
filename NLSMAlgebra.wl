@@ -1,6 +1,8 @@
 (* ::Package:: *)
 
 (* ::Package:: *)
+(**)
+
 
 BeginPackage["NLSMAlgebra`"];
 
@@ -90,6 +92,9 @@ Perp[\[CapitalPi][x_]] := 0;
 
 Para[Subscript[\[Sigma], 3]] := Subscript[\[Sigma], 3];
 Perp[Subscript[\[Sigma], 3]] := 0;
+
+Para[Subscript[\[Sigma], 1]] := 0;
+Perp[Subscript[\[Sigma], 1]] := Subscript[\[Sigma], 1];
 
 Para[Id] := 1; Perp[Id] := 0;
 Para[1] := 1; Perp[1] := 0;

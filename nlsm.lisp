@@ -161,6 +161,9 @@
 ;; ============================================================
 ;; 4. FIELD CONTRACTION LOGIC
 ;; ============================================================
+;; ============================================================
+;; 4. FIELD CONTRACTION LOGIC
+;; ============================================================
 
 (defun apply-op (op list-of-terms)
   "Wraps a list of terms in an operator (PARA/PERP).
@@ -263,35 +266,41 @@
 
 (defun contract-varphi (skeleton tag1 tag2)
   "Contraction logic for Varphi fields.
-   Generates 3 branches (VK, VA, VR) multiplying each by (i/2).
-   FIXED: Uses ,@skel to splice the list of traces into the product."
+   Generates 3 branches (VK, VA, VR).
+   UPDATED: Moves the scalar potentials (VK/VA/VR) OUT of the trace 
+   and groups them with the prefactor."
   (let* ((id1 (get-tag-id tag1)) (id2 (get-tag-id tag2))
          (content1 (get-tag-content tag1)) 
          (content2 (get-tag-content tag2))
          (x (second content1))
          (y (second content2))
          (diff (list '- x y))
-         (prefactor '(/ i 2)))
+         (prefactor '(/ i 2))
+         
+         ;; NORMALIZE SKELETON:
+         (skel-list (if (eq (first skeleton) 'tr)
+                        (list skeleton)
+                        skeleton)))
 
     (list '+ 
-          ;; --- Branch 1: VK ---
-          (let ((skel (deep-copy skeleton)))
-            (setf skel (replace-tag-in-expr skel id1 (list 1 (list 'VK diff))))
-            (setf skel (replace-tag-in-expr skel id2 (list 1)))
-            ;; NOTICE THE comma-at sign (,@) BELOW
-            `(* ,prefactor ,@skel))
+          ;; --- Branch 1: VK (Scalar: VK, Matrix: 1, 1) ---
+          (let ((skel (deep-copy skel-list)))
+            (setf skel (replace-tag-in-expr skel id1 (list 1))) ;; Just Matrix
+            (setf skel (replace-tag-in-expr skel id2 (list 1))) ;; Just Matrix
+            `(* ,prefactor ,(list 'VK diff) ,@skel))
 
-          ;; --- Branch 2: VA ---
-          (let ((skel (deep-copy skeleton)))
-            (setf skel (replace-tag-in-expr skel id1 (list 'SIGMA1 (list 'VA diff))))
+          ;; --- Branch 2: VA (Scalar: VA, Matrix: SIGMA1, 1) ---
+          (let ((skel (deep-copy skel-list)))
+            (setf skel (replace-tag-in-expr skel id1 (list 'SIGMA1)))
             (setf skel (replace-tag-in-expr skel id2 (list 1)))
-            `(* ,prefactor ,@skel))
+            `(* ,prefactor ,(list 'VA diff) ,@skel))
 
-          ;; --- Branch 3: VR ---
-          (let ((skel (deep-copy skeleton)))
-            (setf skel (replace-tag-in-expr skel id1 (list 1 (list 'VR diff))))
+          ;; --- Branch 3: VR (Scalar: VR, Matrix: 1, SIGMA1) ---
+          (let ((skel (deep-copy skel-list)))
+            (setf skel (replace-tag-in-expr skel id1 (list 1)))
             (setf skel (replace-tag-in-expr skel id2 (list 'SIGMA1)))
-            `(* ,prefactor ,@skel)))))
+            `(* ,prefactor ,(list 'VR diff) ,@skel)))))
+
 
 ;; ============================================================
 ;; 5. PHYSICS RULES DISPATCHER
