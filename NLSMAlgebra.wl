@@ -39,7 +39,8 @@ Begin["`Private`"];
 
 (* 1. Final Substitution Rules (Run at the very end) *)
 rule = {
-  Tr[Subscript[\[Sigma], 3]] -> 0, 
+  Tr[Subscript[\[Sigma], 3]] -> 0,
+  Tr[Subscript[\[Sigma], 1]] -> 0, 
   Tr[\[CapitalPi][0]] -> 0, 
   Tr[\[CapitalPi][0] . Subscript[\[Sigma], 3]] -> 0, 
   Tr[Subscript[\[Sigma], 3] . \[CapitalPi][0]] -> 0, 

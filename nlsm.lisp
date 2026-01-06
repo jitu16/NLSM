@@ -188,7 +188,8 @@
   "for Different-Trace contraction (Tr[A W]).
    Cyclically rotates the trace content so that W (id) is at the end,
    then returns everything else (A)."
-  (let ((pos (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id))) trace-content)))
+  (let ((pos (position-if
+	      (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id))) trace-content)))
     (append (subseq trace-content (1+ pos)) (subseq trace-content 0 pos))))
 
 (defun get-splitting-coefficients (trace-content id1 id2)

@@ -1,6 +1,8 @@
 (* ::Package:: *)
 
 (* ::Package:: *)
+(**)
+
 
 BeginPackage["NLSMVisuals`", {"NLSMAlgebra`"}];
 
@@ -254,7 +256,7 @@ generateReport[data_Association, factor_: 1] := Module[{skeleton, cleanedSkeleto
    
    headerRow = {Style["ID", Bold], Style["Diagram", Bold], Style["Value", Bold]};
    titleRow = {
-      Item[Style[TraditionalForm[cleanedSkeleton], 20, Black], Background -> LightBlue, Frame -> True, Alignment -> Center], 
+      Item[Style[TraditionalForm[factor*cleanedSkeleton], 20, Black], Background -> LightBlue, Frame -> True, Alignment -> Center], 
       SpanFromLeft, SpanFromLeft
    };
    
@@ -301,7 +303,7 @@ saveReport[data_List, path_, factor_: 1] := Module[{reportColumn, dir},
    If[dir =!= "" && ! DirectoryQ[dir], CreateDirectory[dir]];
    reportColumn = generateReport[data, factor];
    Export[path, reportColumn];
-   Print["Full Multi-Term Report saved to: ", path];
+   Print["Full Report saved to: ", path];
    path
 ];
 
