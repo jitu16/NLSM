@@ -1,16 +1,17 @@
 (defvar *counter* 0)
 
-(defparameter *default-keldysh-rules*
+(defparameter *default-contraction-rules*
   '((W . contract-W)
     (VARPHI . contract-varphi))
   "Default contraction rules for the NLSM.")
 
-(defparameter *default-keldysh-fields*
+(defparameter *default-fields*
   '(W VARPHI)
   "Default field types to look for in the Keldysh electronic model.")
 
-(defvar *physics-rules* "Dynamic configuration map. 
-   Format: ((TYPE . FUNCTION-NAME) ...)
+(defvar *contraction-rules*
+  "Dynamic configuration map. 
+   format: ((TYPE . FUNCTION-NAME) ...)
    Example: ((W . contract-W) (varphi . contract-varphi))")
 
 ;; ============================================================
@@ -121,12 +122,12 @@
             (push (list type tag) groups))))
     groups))
 
-(defun cartesian-product-scenarios (lists-of-scenarios)
+(defun cartesian-product (lists-of-pairings)
   "Recursively combines independent pairing lists into global scenarios."
   (cond
-    ((null lists-of-scenarios) '(nil))
-    (t (let ((current-scenarios (first lists-of-scenarios))
-             (rest-scenarios (cartesian-product-scenarios (rest lists-of-scenarios))))
+    ((null lists-of-pairings) '(nil))
+    (t (let ((current-scenarios (first lists-of-pairings))
+             (rest-scenarios (cartesian-product (rest lists-of-pairings))))
          (loop for curr in current-scenarios
                nconc (loop for r in rest-scenarios
                            collect (append curr r)))))))
@@ -143,24 +144,21 @@
        ;; Iterate through all possible partners for 'head'
        (loop for i from 0 below (length rest)
              for partner in rest
-             For remaining = (remove-nth i rest)
+             for remaining = (remove-nth i rest)
              ;; Combine this pair with all valid pairings of the remaining items
              nconc (loop for sub-pairing in (generate-pairs remaining)
                          collect (cons (list head partner) sub-pairing)))))))
 
-(defun generate-stratified-pairs (items)
+(defun generate-stratified-pairing (items)
   "The Main Pairing Function.
    Input: items (A flat list of tagged fields).
-   Output: List of all valid global pairing scenarios."
+   Output: List of all valid global pairing."
   (let* ((groups (group-tags-by-type items))
          (per-type-scenarios 
           (loop for entry in groups
                 collect (generate-pairs (cdr entry)))))
-    (cartesian-product-scenarios per-type-scenarios)))
+    (cartesian-product per-type-scenarios)))
 
-;; ============================================================
-;; 4. FIELD CONTRACTION LOGIC
-;; ============================================================
 ;; ============================================================
 ;; 4. FIELD CONTRACTION LOGIC
 ;; ============================================================
@@ -187,14 +185,14 @@
   (cdr trace-obj))
 
 (defun get-single-coefficient (trace-content id)
-  "For Different-Trace contraction (Tr[A W]).
+  "for Different-Trace contraction (Tr[A W]).
    Cyclically rotates the trace content so that W (id) is at the end,
    then returns everything else (A)."
   (let ((pos (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id))) trace-content)))
     (append (subseq trace-content (1+ pos)) (subseq trace-content 0 pos))))
 
 (defun get-splitting-coefficients (trace-content id1 id2)
-  "For Same-Trace contraction (Tr[A W1 B W2]).
+  "for Same-Trace contraction (Tr[A W1 B W2]).
    Returns two values: the list A (between W1 and W2) and the list B (wrapping around)."
   (let ((pos1 (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id1))) trace-content))
         (pos2 (position-if (lambda (x) (and (consp x) (eq (first x) :tagged) (= (second x) id2))) trace-content)))
@@ -306,12 +304,12 @@
 ;; 5. PHYSICS RULES DISPATCHER
 ;; ============================================================
 
-(defun apply-physics-rules (skeleton pairing)
+(defun apply-contraction-rules (skeleton pairing)
   "The Dispatcher. Looks up the correct contraction function based on Tag Type."
   (let* ((tag1 (first pairing))
          (tag2 (second pairing))
          (type (get-tag-type tag1)) ;; We assume tag1 and tag2 have same type
-         (rule-entry (assoc type *physics-rules*)))
+         (rule-entry (assoc type *contraction-rules*)))
     
     (unless rule-entry
       (error "No contraction rule found for field type: ~A" type))
@@ -436,18 +434,18 @@
           (if (= pos1 pos2)
               ;; Same Term (Recursive contraction inside one trace)
               (let ((new-args (copy-list args)))
-                (setf (nth pos1 new-args) (apply-physics-rules (nth pos1 args) pair))
+                (setf (nth pos1 new-args) (apply-contraction-rules (nth pos1 args) pair))
                 (cons '* new-args))
               ;; Different Terms (Merging two traces)
               (let* ((t1 (nth pos1 args)) (t2 (nth pos2 args))
-                     (merged (apply-physics-rules (list t1 t2) pair))
+                     (merged (apply-contraction-rules (list t1 t2) pair))
                      (others (loop for i from 0 for x in args unless (or (= i pos1) (= i pos2)) collect x)))
                 (cons '* (cons merged others)))))
         ;; Base case: Single term
-        (apply-physics-rules expr pair))))
+        (apply-contraction-rules expr pair))))
 
-(defun process-scenario (expr pairings)
-  "Processes a specific pairing scenario on the expression.
+(defun apply-contraction-to-pairing (expr pairings)
+  "Processes a specific pairing on the expression.
    1. Expands expression.
    2. Iteratively applies contractions.
    3. Handles branching sums generated by expansions."
@@ -456,12 +454,12 @@
       ;; Case: Sum generated by expansion -> Map over all terms
       ((and (consp ex) (eq (first ex) '+))
        (cons '+ (loop for term in (cdr ex) 
-                      for res = (process-scenario term pairings)
+                      for res = (apply-contraction-to-pairing term pairings)
                       if (and (consp res) (eq (first res) '+)) append (cdr res) else collect res)))
       ;; Case: No pairs left -> Return result
       ((null pairings) ex)
       ;; Case: Contract -> Apply next pair
-      (t (process-scenario (apply-contraction-in-context ex (first pairings)) (rest pairings))))))
+      (t (apply-contraction-to-pairing (apply-contraction-in-context ex (first pairings)) (rest pairings))))))
 
 ;; ============================================================
 ;; 8. THE SAFE CLEANER
@@ -514,7 +512,7 @@
 ;; ============================================================
 ;; 9. MATHEMATICA INTERFACE
 ;; ============================================================
-(defun to-mma-string (expr &optional context)
+(defun to-mathematica-string (expr &optional context)
   "Recursively converts Lisp structures to Mathematica string syntax.
    Context: 'MATRIX (uses Dot . separator) or 'SCALAR (uses Times * separator)."
   (cond
@@ -532,58 +530,58 @@
      (let ((op (first expr)) (args (rest expr)))
        (cond
          ((eq op :tagged) (format nil "Tagged[~A, ~A]"
-                                  (get-tag-id expr) (to-mma-string (get-tag-content expr) 'MATRIX)))
+                                  (get-tag-id expr) (to-mathematica-string (get-tag-content expr) 'MATRIX)))
          
          ;; Derivatives: (d x) -> Der[x]
-         ((eq op 'd) (format nil "Der[~A]" (to-mma-string (first args) 'SCALAR)))
+         ((eq op 'd) (format nil "Der[~A]" (to-mathematica-string (first args) 'SCALAR)))
          
-         ;; Arithmetic Formatting
+         ;; Arithmetic formatting
          ((eq op '+) 
           (if (null args) "0"
               (let ((clean (remove-if (lambda (s) (string= s "")) 
-                                      (mapcar (lambda (x) (to-mma-string x context)) args))))
+                                      (mapcar (lambda (x) (to-mathematica-string x context)) args))))
                 (format nil "(~{~A~^ + ~})" clean))))
          
          ((eq op '-)
-          (if (= (length args) 1) (format nil "(-~A)" (to-mma-string (first args) context))
+          (if (= (length args) 1) (format nil "(-~A)" (to-mathematica-string (first args) context))
               (format nil
-                      "(~A - ~A)" (to-mma-string (first args) context) (to-mma-string (second args) context))))
+                      "(~A - ~A)" (to-mathematica-string (first args) context) (to-mathematica-string (second args) context))))
          ((eq op '/)
-          (if (= (length args) 1) (format nil "(1 / ~A)" (to-mma-string (first args) context))
+          (if (= (length args) 1) (format nil "(1 / ~A)" (to-mathematica-string (first args) context))
               (format nil
-                      "(~A / ~A)" (to-mma-string (first args) context) (to-mma-string (second args) context))))
+                      "(~A / ~A)" (to-mathematica-string (first args) context) (to-mathematica-string (second args) context))))
          
          ;; Product (* vs .) based on Context
          ((eq op '*)
           (if (null args) (if (eq context 'MATRIX) "Id" "1")
               (let* ((sep (if (eq context 'MATRIX) " . " " * "))
                      (clean (remove-if (lambda (s) (string= s "")) 
-                                       (mapcar (lambda (x) (to-mma-string x context)) args))))
+                                       (mapcar (lambda (x) (to-mathematica-string x context)) args))))
                 (format nil (concatenate 'string "(~{~A~^" sep "~})") clean))))
          
          ;; Power
          ((eq op 'expt) (format nil
-                                "(~A^~A)" (to-mma-string (first args) context) (to-mma-string (second args) 'SCALAR)))
+                                "(~A^~A)" (to-mathematica-string (first args) context) (to-mathematica-string (second args) 'SCALAR)))
 
          ;; Propagator formatting with Dot Product for Derivatives
          ((eq op 'PI)
           (let ((coord (first args)) (derivs (rest args)))
-            (if (null derivs) (format nil "\\[CapitalPi][~A]" (to-mma-string coord 'SCALAR))
+            (if (null derivs) (format nil "\\[CapitalPi][~A]" (to-mathematica-string coord 'SCALAR))
                 (format nil "(~{~A~^ . ~} . \\[CapitalPi][~A])" 
-                        (mapcar (lambda (x) (to-mma-string x 'SCALAR)) derivs) (to-mma-string coord 'SCALAR)))))
+                        (mapcar (lambda (x) (to-mathematica-string x 'SCALAR)) derivs) (to-mathematica-string coord 'SCALAR)))))
          
          ;; Matrix Ops (Switch context to MATRIX)
          ((member op '(TR PARA PERP))
           (let ((clean (remove-if (lambda (s) (string= s "")) 
-                                  (mapcar (lambda (x) (to-mma-string x 'MATRIX)) args))))
-            (format nil "~A[~A]" (to-mma-string op) 
+                                  (mapcar (lambda (x) (to-mathematica-string x 'MATRIX)) args))))
+            (format nil "~A[~A]" (to-mathematica-string op) 
                     (format nil "~{~A~^ . ~}" clean))))
          
          ;; Standard functions (Keep SCALAR context)
          (t (format nil
-                    "~A[~{~A~^, ~}]" (to-mma-string op) (mapcar (lambda (x) (to-mma-string x 'SCALAR)) args))))))))
+                    "~A[~{~A~^, ~}]" (to-mathematica-string op) (mapcar (lambda (x) (to-mathematica-string x 'SCALAR)) args))))))))
 
-(defun format-topology-mma (pairing)
+(defun format-topology (pairing)
   "Helper to format the list of pairs into Mathematica syntax: {{1,2}, {3,4}}."
   (format nil "{~{~A~^, ~}}" 
           (loop for pair in pairing collect (format nil "{~D, ~D}" (second (first pair)) (second (second pair))))))
@@ -591,14 +589,14 @@
 (defun print-simulation-object (sim-data)
   "Helper: Prints a single simulation object as a Mathematica Association."
   (let ((skeleton (getf sim-data :skeleton)) (diagrams (getf sim-data :diagrams)))
-    (format t "<|~%  \"Skeleton\" -> ~A,~%  \"Diagrams\" -> {~%" (to-mma-string skeleton 'MATRIX))
+    (format t "<|~%  \"Skeleton\" -> ~A,~%  \"Diagrams\" -> {~%" (to-mathematica-string skeleton 'MATRIX))
     (loop for d in diagrams for i from 1 for is-last = (= i (length diagrams)) do
           (format t "    <| \"ID\" -> ~D, \"Status\" -> \"~A\", \"Topology\" -> ~A, \"Value\" -> ~A |>~A~%"
-                  (getf d :id) (getf d :status) (format-topology-mma (getf d :pairing))
-                  (to-mma-string (getf d :result) 'SCALAR) (if is-last "" ",")))
+                  (getf d :id) (getf d :status) (format-topology (getf d :pairing))
+                  (to-mathematica-string (getf d :result) 'SCALAR) (if is-last "" ",")))
     (format t "  }~%|>")))
 
-(defun generate-mma-report (sim-data-list)
+(defun generate-mathematica-report (sim-data-list)
   "Iterates over the list of simulation results and prints a Mathematica List of Associations."
   (format t "{~%")
   (loop for sim in sim-data-list
@@ -641,9 +639,9 @@
                     ((some (lambda (entry) (oddp (length (cdr entry)))) groups)
                      (list (list :id 1 :pairing nil :result 0 :status :vanished)))
                     
-                    (t (loop for p in (generate-stratified-pairs items) 
+                    (t (loop for p in (generate-stratified-pairing items) 
                              for i from 1
-                             for res = (simplify-expression (process-scenario term p))
+                             for res = (simplify-expression (apply-contraction-to-pairing term p))
                              collect (list :id i 
                                            :pairing p 
                                            :result res 
@@ -653,8 +651,8 @@
 ;; 11. API INTEGRATION & CLI
 ;; ============================================================
 
-(defun main (expr &key (rules *default-keldysh-rules*) 
-                       (fields *default-keldysh-fields*))
+(defun main (expr &key (rules *default-contraction-rules*) 
+                       (fields *default-fields*))
   "The High-Level Entry Point.
    
    Arguments:
@@ -662,8 +660,8 @@
      rules: (Optional) Alist mapping Field-Types to Contraction-Functions.
      fields: (Optional) List of Field-Types to tag and contract."
   
-  (let ((*physics-rules* rules))
-    (generate-mma-report (solve-wick-contraction expr fields))))
+  (let ((*contraction-rules* rules))
+    (generate-mathematica-report (solve-wick-contraction expr fields))))
 
 (defun run-from-cli ()
   "Entry point for CLI execution (called by Mathematica).
