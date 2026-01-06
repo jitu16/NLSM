@@ -9,7 +9,7 @@ The framework consists of four interdependent packages. They must be placed in t
 ### 1. `NLSMAlgebra.wl` (The Math Engine)
 * **Role:** Handles all symbolic tensor manipulation.
 * **Key Features:**
-    * Implements cyclic trace properties to canonicalize terms involving $\Phi$ (`cyclePhiToFirst`).
+    * Implements cyclic trace properties to canonicalize terms involving $\Phi$ (`cycle\[Phi]ToFirst`).
     * Manages projection operators ($\mathcal{P}_{\parallel}$, $\mathcal{P}_{\perp}$) and derivatives ($\partial$).
     * Enforces commutation rules (e.g., $\Sigma_3$ logic) and handles identity removal.
     * **Exports:** `FinalSimplify`, `TraceSimplify`, `MySimplify`.
