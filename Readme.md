@@ -1,7 +1,6 @@
-UML Diagram which shows what has been implemented-->
 ```mermaid
 graph TD
-    Master Program([User / Notebook])
+    User([User / Prototype Notebook])
     Driver[NLSMDriver<br/><i>The Manager</i>]
     Algebra[NLSMAlgebra<br/><i>Math Engine</i>]
     Lisp[NLSMLisp<br/><i>Lisp Interface & Translator</i>]
@@ -18,19 +17,28 @@ graph TD
     
     Driver -->|4. Sends Data for Diagrams & Report| Visuals
     Visuals -->|5. Exports PDF| FileSystem
-    Visuals -.->|Return Grid| User
+    Visuals -.->|Return| User
 
     classDef main fill:#f9f,stroke:#333,stroke-width:2px;
     classDef sub fill:#e1f5fe,stroke:#333;
     class Driver main;
     class Algebra,Lisp,Visuals sub;
 ```
-Here is the Execution Flow of the Program-->
+
+**---Module to be implemented---**
+
+**Grand generator module**: This module will generate all interaction terms from a given action, restricted to a specific accuracy (e.g., 2-loop). After generating the full expansion, it will feed the final expression to the Driver. This module will essentially replace the current manual input role of the "User" for a complete automation pipeline.
+
+**Integration module**: An added module between the Visuals and Driver. This will perform the necessary integration and keep the singular term (logarithmic quantum corrections in 2d). These will be fed back to the visuals for generating report.
+
+Here is the current execution flow of the Program-->
+
 ```mermaid
 sequenceDiagram
     participant U as User
     participant D as NLSMDriver
     participant L as NLSMLisp
+    participant Li as External Lisp
     participant A as NLSMAlgebra
     participant V as NLSMVisuals
 
@@ -39,12 +47,18 @@ sequenceDiagram
     loop Every Term
         D->>D: IsolateFactor(Term)
         
-        D->>L: ToLispString(Trace)
-        L->>L: EvaluateModel()
-        L-->>D: Returns {Skeleton, Topologies}
+        %% The Lisp Execution Chain
+        D->>L: ToLispString(Trace-Expr)
+        L->>Li: EvaluateModel()
         
+        Note over Li: 1. Wick Contractions<br/>2. Identify Topology<br/>3. Compute Raw Value
+        
+        Li-->>L: Returns {Skeleton, Topologies, Value}
+        L-->>D: Returns {Skeleton, Topologies, Value}
+        
+        %% The Math & Vis Chain
         D->>A: FinalSimplify(Factor * Value)
-        A-->>D: Returns Simplified Scalar
+        A-->>D: Returns Simplified Expression
         
         D->>D: Format Title (TraditionalForm)
         
