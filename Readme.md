@@ -1,7 +1,7 @@
-UML Diagram which shows what has been implemented and what is needed.
+UML Diagram which shows what has been implemented-->
 ```mermaid
 graph TD
-    Master Program([Prototype: User / Notebook])
+    Master Program([User / Notebook])
     Driver[NLSMDriver<br/><i>The Manager</i>]
     Algebra[NLSMAlgebra<br/><i>Math Engine</i>]
     Lisp[NLSMLisp<br/><i>Lisp Interface & Translator</i>]
@@ -25,7 +25,7 @@ graph TD
     class Driver main;
     class Algebra,Lisp,Visuals sub;
 ```
-Here is the Execution Flow of the Program::
+Here is the Execution Flow of the Program-->
 ```mermaid
 sequenceDiagram
     participant U as User
