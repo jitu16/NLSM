@@ -28,7 +28,7 @@
    Input: (expt X -2) -> Output: ((/ 1 (* X X)))
    
    If input is not an exponent, returns it as a single-item list."
-  (if (and (consp term) (eq (first term) 'expt))
+  (IF (and (consp term) (eq (first term) 'expt))
       (let ((base (second term))
             (exponent (third term)))
         (if (minusp exponent)
@@ -676,3 +676,5 @@
         (sb-ext:exit :code 0)))))
 
 (run-from-cli)
+
+(main '(* (tr A (varphi x)) (tr B (varphi y))))

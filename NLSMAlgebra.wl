@@ -37,7 +37,7 @@ Begin["`Private`"];
 
 (* --- CONFIGURATION: Rules & Commutations --- *)
 
-(* 1. Final Substitution Rules (Run at the very end) *)
+(* 1. Final Substitution Rules (Run at the very end) (**)
 rule = {
   Tr[Subscript[\[Sigma], 3]] -> 0,
   Tr[Subscript[\[Sigma], 1]] -> 0, 
@@ -49,6 +49,18 @@ rule = {
   Tr[Der[x_] . Der[y_]] -> 0, 
   Tr[Der[x_] . Subscript[\[Sigma], 3]] -> 0, 
   Tr[Der[x_] . Der[y_] . Subscript[\[Sigma], 3]] -> 0
+};*)
+
+
+rule = {
+  Tr[Subscript[\[Sigma], 3]] -> 0,
+  Tr[Subscript[\[Sigma], 1]] -> 0, 
+  Tr[Id] -> 0, Tr[1] -> 0, Tr[0] -> 0, 
+  Tr[Der[x_]] -> 0, 
+  Tr[Der[x_] . Der[y_]] -> 0, 
+  Tr[Der[x_] . Subscript[\[Sigma], 3]] -> 0, 
+  Tr[Der[x_] . Der[y_] . Subscript[\[Sigma], 3]] -> 0,
+  Tr[y___ . \[CapitalPi][x_] . z___]:>Tr[y . z](DR[x]+DA[x])+Tr[y . Subscript[\[Sigma], 3] . z](DR[x]-DA[x])
 };
 
 commutationRules = {
