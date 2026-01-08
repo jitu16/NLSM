@@ -1,6 +1,7 @@
+UML Diagram which shows what has been implemented and what is needed.
 ```mermaid
 graph TD
-    User([User / Notebook])
+    Master Program([Prototype: User / Notebook])
     Driver[NLSMDriver<br/><i>The Manager</i>]
     Algebra[NLSMAlgebra<br/><i>Math Engine</i>]
     Lisp[NLSMLisp<br/><i>Lisp Interface & Translator</i>]
@@ -23,3 +24,33 @@ graph TD
     classDef sub fill:#e1f5fe,stroke:#333;
     class Driver main;
     class Algebra,Lisp,Visuals sub;
+```
+Here is the Execution Flow of the Program::
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant D as NLSMDriver
+    participant L as NLSMLisp
+    participant A as NLSMAlgebra
+    participant V as NLSMVisuals
+
+    U->>D: GenerateDiagrams(Expr)
+    
+    loop Every Term
+        D->>D: IsolateFactor(Term)
+        
+        D->>L: ToLispString(Trace)
+        L->>L: EvaluateModel()
+        L-->>D: Returns {Skeleton, Topologies}
+        
+        D->>A: FinalSimplify(Factor * Value)
+        A-->>D: Returns Simplified Scalar
+        
+        D->>D: Format Title (TraditionalForm)
+        
+        D->>V: saveReport(EnhancedData)
+        V-->>U: Saves PDF to Disk
+    end
+    
+    D-->>U: Returns Visual Grid
+```
