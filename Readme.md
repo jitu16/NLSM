@@ -1,3 +1,30 @@
+**A sample Mathematica notebook to calculate contractions!**
+
+ClearAll["Global`*"];
+
+SetDirectory[NotebookDirectory[]];
+
+<< NLSMDriver`;
+
+(*2. Define a Dummy Model*)
+
+fullexpr = 
+  1/(2 t) Tr[\[CapitalPhi][r] . Subscript[\[Sigma], 3] . W[r] . 
+      W[r] . \[CapitalPhi][r] . Subscript[\[Sigma], 3] . W[r] . 
+      W[r]] + \[Lambda]/(2 t)
+     Tr[\[CapitalPhi][r] . Subscript[\[Sigma], 
+      3] . \[CapitalPhi][r] . Subscript[\[Sigma], 3] . W[r] . W[r] . 
+      W[r] . W[r]] + (1 + \[Lambda])/(2 t)
+     Tr[\[CapitalPhi][r] . Subscript[\[Sigma], 3] . 
+      W[r] . \[CapitalPhi][r] . Subscript[\[Sigma], 3] . W[r] . 
+      W[r] . W[r]];
+
+(*3. Run the Driver*)
+
+NLSMDriver`GenerateDiagrams[fullexpr, "Report", "S2p", "Display" -> True]
+
+
+**The model architecture**
 ```mermaid
 graph TD
     User([User / Prototype Notebook])
