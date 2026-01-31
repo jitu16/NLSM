@@ -676,5 +676,3 @@
         (sb-ext:exit :code 0)))))
 
 (run-from-cli)
-
-(main '(* (tr A (varphi x)) (tr B (varphi y))))
