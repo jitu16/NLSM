@@ -1,3 +1,8 @@
+(defpackage :nlsm-jitu
+  (:use :cl))
+
+(in-package :nlsm-jitu)
+
 (defvar *counter* 0)
 
 (defparameter *default-contraction-rules*
